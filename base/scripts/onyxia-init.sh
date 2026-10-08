@@ -43,11 +43,13 @@ if [ "$(id -u)" -eq 0 ]; then
 
     echo "Bascule de l'exécution vers l'utilisateur onyxia..."
     if command -v sudo >/dev/null 2>&1; then
-        exec sudo -H -u onyxia "$@"
+        # -E préserve toutes les variables d'environnement (HAMI, CUDA, K8s)
+        exec sudo -E -H -u onyxia "$@"
     elif command -v runuser >/dev/null 2>&1; then
         exec runuser -u onyxia -- "$@"
     elif command -v su >/dev/null 2>&1; then
-        exec su -s /bin/sh onyxia -c 'exec "$@"' -- "$@"
+        # -p conserve l'environnement courant lors du changement d'utilisateur
+        exec su -p -s /bin/sh onyxia -c 'exec "$@"' -- "$@"
     else
         # Sécurité ultime : si aucune bascule n'est possible, on force --allow-root pour Jupyter
         case "$*" in
