@@ -3,17 +3,62 @@
 echo "start of onyxia-init.sh script as user :"
 whoami
 
-# 1. Tentative d'installation automatique de sudo si absent et sous l'utilisateur root
-if ! command -v sudo >/dev/null 2>&1 && [ "$(id -u)" -eq 0 ]; then
-    echo "sudo non détecté. Tentative d'installation automatique..."
-    if command -v apt-get >/dev/null 2>&1; then
-        apt-get update -qq && apt-get install -y -qq sudo
-    elif command -v apk >/dev/null 2>&1; then
-        apk add --no-cache sudo
-    elif command -v microdnf >/dev/null 2>&1; then
-        microdnf install -y sudo
+# ==============================================================================
+# INITIALISATION DYNAMIQUE DE L'UTILISATEUR ET DES PERMISSIONS
+# ==============================================================================
+if [ "$(id -u)" -eq 0 ]; then
+    # 1. Création de l'utilisateur onyxia s'il n'existe pas dans le conteneur
+    if ! id -u onyxia >/dev/null 2>&1; then
+        echo "Utilisateur 'onyxia' non détecté. Création dynamique..."
+        if command -v useradd >/dev/null 2>&1; then
+            useradd -m -s /bin/bash -u 1000 onyxia 2>/dev/null || useradd -m -s /bin/sh onyxia
+        elif command -v adduser >/dev/null 2>&1; then
+            adduser -D -s /bin/sh -u 1000 onyxia 2>/dev/null || adduser -D onyxia
+        fi
+    fi
+
+    # 2. Préparation du répertoire de travail
+    mkdir -p /home/onyxia/work
+    chown -R onyxia: /home/onyxia
+
+    # 3. Installation de sudo et attribution des droits NOPASSWD si absents
+    if ! command -v sudo >/dev/null 2>&1; then
+        if command -v apt-get >/dev/null 2>&1; then
+            apt-get update -qq && apt-get install -y -qq sudo 2>/dev/null
+        elif command -v apk >/dev/null 2>&1; then
+            apk add --no-cache sudo 2>/dev/null
+        elif command -v microdnf >/dev/null 2>&1; then
+            microdnf install -y sudo 2>/dev/null
+        fi
+    fi
+
+    if command -v sudo >/dev/null 2>&1; then
+        echo "onyxia ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/onyxia 2>/dev/null || true
+        chmod 0440 /etc/sudoers.d/onyxia 2>/dev/null || true
+    fi
+
+    # 4. Bascule de l'exécution vers l'utilisateur non-privilégié 'onyxia'
+    export HOME=/home/onyxia
+    cd /home/onyxia/work
+
+    echo "Bascule de l'exécution vers l'utilisateur onyxia..."
+    if command -v sudo >/dev/null 2>&1; then
+        exec sudo -H -u onyxia "$@"
+    elif command -v runuser >/dev/null 2>&1; then
+        exec runuser -u onyxia -- "$@"
+    elif command -v su >/dev/null 2>&1; then
+        exec su -s /bin/sh onyxia -c 'exec "$@"' -- "$@"
+    else
+        # Sécurité ultime : si aucune bascule n'est possible, on force --allow-root pour Jupyter
+        case "$*" in
+            *jupyter*) exec "$@" --allow-root ;;
+            *) exec "$@" ;;
+        esac
     fi
 fi
+
+echo "continuing of onyxia-init.sh script as user :"
+whoami
 
 sudo true -nv 2>&1
 if [ $? -eq 0 ]; then
